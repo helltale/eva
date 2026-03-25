@@ -14,6 +14,7 @@ import (
 	"eva/services/backend/internal/auth"
 	"eva/services/backend/internal/config"
 	"eva/services/backend/internal/observability"
+	"eva/services/backend/internal/voice/nooptts"
 )
 
 type Envelope struct {
@@ -225,6 +226,23 @@ func (h *Handler) handleTextMessage(parent context.Context, write func(Envelope)
 		})
 		write(Envelope{Version: env.Version, Type: "tts.started", RequestID: env.RequestID, SessionID: sid, Timestamp: time.Now().UnixMilli(), Payload: mustJSON(map[string]string{"voiceName": "default"})})
 		observability.TTSRequests.Inc()
+		t0 := time.Now()
+		if h.cfg.TTSNoopBeep && h.cfg.TTSProvider == "noop" {
+			seq, enc, b64 := nooptts.WSChunk()
+			write(Envelope{
+				Version:   env.Version,
+				Type:      "tts.chunk",
+				RequestID: env.RequestID,
+				SessionID: sid,
+				Timestamp: time.Now().UnixMilli(),
+				Payload: mustJSON(map[string]any{
+					"sequence":      seq,
+					"audioEncoding": enc,
+					"data":          b64,
+				}),
+			})
+		}
+		observability.TTSDuration.Observe(time.Since(t0).Seconds())
 		write(Envelope{Version: env.Version, Type: "tts.finished", RequestID: env.RequestID, SessionID: sid, Timestamp: time.Now().UnixMilli()})
 	}()
 }

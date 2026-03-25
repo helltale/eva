@@ -34,10 +34,18 @@ func (r *Runner) RunTurn(ctx context.Context, userID, convID uuid.UUID, userText
 	if err != nil {
 		return "", nil, nil, err
 	}
-	lmMsgs := make([]llm.Message, 0, len(msgs))
+	lmMsgs := make([]llm.Message, 0, len(msgs)+1)
+	const sys = `You are EVA, a concise home LAN assistant. For questions that need current facts, news, or anything beyond your training cutoff, you MUST call the web_search tool with a focused query. If the user speaks another language, reply in that language.`
+	if len(msgs) == 0 || msgs[0].Role != "system" {
+		lmMsgs = append(lmMsgs, llm.Message{Role: "system", Content: sys})
+	}
 	for _, m := range msgs {
 		if m.Role == "tool" {
 			lmMsgs = append(lmMsgs, llm.Message{Role: "tool", Content: m.Content, Name: "web_search"})
+			continue
+		}
+		if m.Role == "system" {
+			lmMsgs = append(lmMsgs, llm.Message{Role: "system", Content: m.Content})
 			continue
 		}
 		lmMsgs = append(lmMsgs, llm.Message{Role: m.Role, Content: m.Content})
