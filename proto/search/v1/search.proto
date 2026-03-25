@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package eva.search.v1;
+
+option go_package = "eva/services/backend/internal/gen/search/v1;searchv1";
+
+service SearchService {
+  rpc Search(SearchRequest) returns (SearchResponse);
+  rpc FetchPage(FetchPageRequest) returns (FetchPageResponse);
+}
+
+message SearchRequest {
+  string query = 1;
+  int32 max_results = 2;
+}
+
+message SearchHit {
+  string title = 1;
+  string url = 2;
+  string snippet = 3;
+}
+
+message SearchResponse {
+  repeated SearchHit hits = 1;
+  string error = 2;
+}
+
+message FetchPageRequest {
+  string url = 1;
+  int32 max_chars = 2;
+}
+
+message FetchPageResponse {
+  string url = 1;
+  string title = 2;
+  string text = 3;
+  string error = 4;
+}

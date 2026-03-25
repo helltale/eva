@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package eva.llm.v1;
+
+import "common/v1/common.proto";
+
+option go_package = "eva/services/backend/internal/gen/llm/v1;llmv1";
+
+service LLMGatewayService {
+  rpc Generate(GenerateRequest) returns (GenerateResponse);
+  rpc StreamGenerate(GenerateRequest) returns (stream GenerateChunk);
+}
+
+message GenerateRequest {
+  string model = 1;
+  repeated ChatMessage messages = 2;
+  repeated ToolDefinition tools = 3;
+}
+
+message ChatMessage {
+  string role = 1;
+  string content = 2;
+}
+
+message ToolDefinition {
+  string name = 1;
+  string description = 2;
+  string parameters_json = 3;
+}
+
+message GenerateResponse {
+  string content = 1;
+  repeated eva.common.v1.ToolCall tool_calls = 2;
+}
+
+message GenerateChunk {
+  string delta = 1;
+  bool done = 2;
+  repeated eva.common.v1.ToolCall tool_calls = 3;
+}

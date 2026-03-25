@@ -1,0 +1,28 @@
+{
+  # Local HTTPS for microphone access. Trust Caddy's local CA or use mkcert.
+}
+
+{$PUBLIC_HOST:localhost} {
+  tls internal
+
+  encode gzip
+
+  @api path /api/*
+  handle @api {
+    reverse_proxy backend:8080
+  }
+
+  @ws path /ws/*
+  handle @ws {
+    reverse_proxy backend:8080
+  }
+
+  @metrics path /metrics
+  handle @metrics {
+    reverse_proxy backend:8080
+  }
+
+  handle {
+    reverse_proxy web:80
+  }
+}

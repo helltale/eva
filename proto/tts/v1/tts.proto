@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package eva.tts.v1;
+
+option go_package = "eva/services/backend/internal/gen/tts/v1;ttsv1";
+
+service TTSService {
+  rpc Synthesize(SynthesizeRequest) returns (SynthesizeResponse);
+  rpc StreamSynthesize(SynthesizeRequest) returns (stream AudioChunk);
+  rpc ListVoices(ListVoicesRequest) returns (ListVoicesResponse);
+}
+
+message SynthesizeRequest {
+  string text = 1;
+  string voice_id = 2;
+  string language = 3;
+  float rate = 4;
+  float volume = 5;
+}
+
+message SynthesizeResponse {
+  bytes audio = 1;
+  string encoding = 2;
+  string error = 3;
+}
+
+message AudioChunk {
+  bytes data = 1;
+  int32 sequence = 2;
+  string encoding = 3;
+  bool done = 4;
+}
+
+message ListVoicesRequest {}
+
+message VoiceInfo {
+  string id = 1;
+  string name = 2;
+  string language = 3;
+  string provider = 4;
+}
+
+message ListVoicesResponse {
+  repeated VoiceInfo voices = 1;
+}

@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package eva.stt.v1;
+
+option go_package = "eva/services/backend/internal/gen/stt/v1;sttv1";
+
+service STTService {
+  rpc StreamRecognize(stream AudioFrame) returns (stream RecognizeEvent);
+}
+
+message AudioFrame {
+  bytes pcm = 1;
+  string encoding = 2;
+  int32 sample_rate = 3;
+  bool end = 4;
+}
+
+message RecognizeEvent {
+  string text = 1;
+  bool is_final = 2;
+  string error = 3;
+}

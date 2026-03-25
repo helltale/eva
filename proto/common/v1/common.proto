@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package eva.common.v1;
+
+option go_package = "eva/services/backend/internal/gen/common/v1;commonv1";
+
+message TextChunk {
+  string text = 1;
+  bool done = 2;
+}
+
+message ToolCall {
+  string name = 1;
+  string arguments_json = 2;
+}
+
+message ToolResult {
+  string name = 1;
+  string result_json = 2;
+  string error = 3;
+}
