@@ -1,0 +1,1491 @@
+{
+  "document_type": "technical_specification",
+  "version": "1.1.0",
+  "language": "ru",
+  "target_consumer": "Cursor",
+  "project": {
+    "name": "lan_voice_assistant",
+    "display_name": "Self-hosted LAN Voice Assistant",
+    "summary": "Self-hosted ассистент для локальной сети с web-first клиентом, подготовленной архитектурой для desktop и mobile, текстовым и голосовым режимами, локальным запуском через Docker Compose, contract-first API, OpenAPI для внешнего HTTP API, gRPC для внутреннего взаимодействия и поддержкой человеческого голосового ответа через TTS.",
+    "primary_goal": "Собрать pet project ассистента, который можно запустить дома в локальной сети без обязательных платных внешних сервисов, с возможностью вести текстовый и голосовой диалог.",
+    "product_positioning": "Web-first self-hosted assistant platform with text chat, voice input, human-like voice output, optional local LLM, and future-ready desktop/mobile clients."
+  },
+  "product_requirements": {
+    "must_have": [
+      "Self-hosted запуск в локальной сети",
+      "Удобный запуск через Docker Compose",
+      "Web-клиент как первая реализуемая платформа",
+      "Архитектура, пригодная для desktop и mobile без перелома backend",
+      "Текстовый чат с ассистентом",
+      "Голосовой режим с человеческим голосовым ответом",
+      "Поддержка локальной LLM по умолчанию для бесплатного использования",
+      "Возможность получать актуальные данные из интернета через поисковый сервис",
+      "HTTP API наружу",
+      "OpenAPI contract-first",
+      "Генерация Go-типов и серверных интерфейсов из OpenAPI",
+      "Генерация TypeScript client/types из OpenAPI",
+      "gRPC для внутренних синхронных вызовов между сервисами",
+      "Kafka не использовать в MVP, но заложить возможность добавить позже",
+      "Reverse proxy с HTTPS/TLS для работы web-микрофона",
+      "Хранение истории диалогов",
+      "Базовая система настроек пользователя",
+      "Наблюдаемость: healthcheck, logs, basic metrics",
+      "TTS как штатный модуль архитектуры, а не опция",
+      "Потоковая озвучка ответа ассистента",
+      "Interrupt/barge-in: пользователь может перебить ассистента во время речи",
+      "Настройки голоса ассистента: голос, язык, скорость, громкость, автопроигрывание",
+      "Поддержка синхронизации текстового и голосового ответа"
+    ],
+    "nice_to_have": [
+      "Wake word позже",
+      "Desktop shell через Tauri позже",
+      "Mobile shell через Capacitor или Tauri позже",
+      "Память пользователя",
+      "Интеграции с заметками, календарем, файлами",
+      "RAG по локальным документам",
+      "Фоновая обработка задач",
+      "Event bus позже",
+      "Несколько голосовых персон",
+      "SSML или voice-style hints позже",
+      "Настройки эмоциональности и тона голоса позже"
+    ],
+    "out_of_scope_for_mvp": [
+      "Сложная multi-tenant модель",
+      "Kubernetes",
+      "Kafka в обязательной поставке",
+      "Собственная обученная модель",
+      "Always-on wake word в web-клиенте",
+      "Полностью автономный mobile offline-first клиент",
+      "Глубокие системные действия на desktop/mobile в первой версии",
+      "Продвинутая эмоциональная актерская озвучка как обязательное условие MVP"
+    ]
+  },
+  "global_constraints": {
+    "cost_policy": {
+      "goal": "Не использовать обязательные платные внешние сервисы",
+      "default_llm_mode": "local",
+      "default_stt_mode": "local",
+      "default_tts_mode": "local",
+      "cloud_integrations": "optional_disabled_by_default"
+    },
+    "deployment": {
+      "mode": "self_hosted_lan",
+      "orchestration": "docker_compose",
+      "reverse_proxy": "caddy",
+      "https_required_for_web_voice": true
+    },
+    "architecture": {
+      "external_api_protocol": "http_json_openapi",
+      "realtime_protocol": "websocket",
+      "internal_sync_protocol": "grpc",
+      "internal_async_protocol_future": "kafka_optional_later",
+      "mvp_shape": "modular_monolith_plus_sidecars",
+      "target_shape": "service_oriented_modular_system"
+    },
+    "implementation_language": {
+      "backend": "golang",
+      "frontend": "typescript"
+    }
+  },
+  "business_assumptions": [
+    "В системе изначально может быть один основной пользователь-администратор",
+    "Сервис работает в домашней или офисной локальной сети",
+    "Интернет может быть доступен не всегда, поэтому архитектура должна иметь деградацию до локального режима",
+    "Требуется web-first UX, но нельзя проектировать backend только под web",
+    "Голосовые функции должны работать по возможности через локальные движки",
+    "Голосовой ответ ассистента является важной частью продукта и должен быть учтен уже в MVP-архитектуре"
+  ],
+  "high_level_decisions": {
+    "architecture_style": "modular_monolith_first",
+    "reasoning": [
+      "Для pet project проще поднять и сопровождать один backend-процесс с хорошо отделенными модулями",
+      "Сложные сервисные границы сохраняются на уровне пакетов и контрактов",
+      "Вынесение в отдельные процессы возможно позже без изменения внешнего API",
+      "Локальные sidecar-сервисы для LLM, STT и TTS допускаются уже в MVP"
+    ],
+    "llm_strategy": {
+      "default": "local_llm_via_provider_adapter",
+      "cloud_optional": true,
+      "providers_required": [
+        "local_provider",
+        "cloud_provider_optional"
+      ],
+      "provider_abstraction_required": true
+    },
+    "internet_facts_strategy": {
+      "default": "tool_based_search",
+      "requirements": [
+        "LLM не должна выдавать актуальные интернет-факты без вызова search tool",
+        "Поиск должен быть отделен от LLM и доступен как отдельный модуль",
+        "При отсутствии интернета ассистент должен корректно сообщать, что онлайн-данные недоступны"
+      ]
+    },
+    "voice_output_strategy": {
+      "default": "human_like_tts",
+      "requirements": [
+        "Голосовой ответ должен быть естественным и человеческим по тембру и темпу",
+        "Озвучка должна поддерживать потоковую выдачу аудио",
+        "Пользователь должен иметь возможность перебить озвучивание",
+        "Текст ответа и голосовой ответ должны формироваться согласованно",
+        "Система должна поддерживать переключаемые TTS providers через единый интерфейс"
+      ]
+    },
+    "api_contract_strategy": {
+      "approach": "contract_first",
+      "public_api_source_of_truth": "openapi_yaml",
+      "internal_api_source_of_truth": "proto_files",
+      "generated_artifacts": [
+        "Go HTTP server interfaces and models",
+        "TypeScript client and models",
+        "Go gRPC clients and servers"
+      ]
+    }
+  },
+  "system_context": {
+    "external_clients": [
+      "web",
+      "desktop_future",
+      "mobile_future"
+    ],
+    "core_backend_modules": [
+      "api",
+      "realtime_gateway",
+      "assistant_core",
+      "llm_gateway",
+      "search_service",
+      "memory_service",
+      "tool_runner",
+      "settings_service",
+      "auth_service",
+      "voice_orchestrator"
+    ],
+    "infra_modules": [
+      "postgres",
+      "redis",
+      "object_storage_optional",
+      "caddy"
+    ],
+    "sidecars_optional": [
+      "local_llm_runtime",
+      "stt_service",
+      "tts_service",
+      "search_engine_meta_service_optional"
+    ]
+  },
+  "target_user_flows": {
+    "text_chat_flow": [
+      "Пользователь открывает web-приложение",
+      "Проходит локальную аутентификацию",
+      "Создает новый диалог или открывает существующий",
+      "Отправляет текстовое сообщение",
+      "Backend оркестрирует вызов LLM и tools при необходимости",
+      "Ответ сохраняется в историю и отображается на UI"
+    ],
+    "voice_chat_flow": [
+      "Пользователь дает доступ к микрофону в web-клиенте",
+      "Клиент открывает WebSocket realtime session",
+      "Клиент отправляет аудио чанки",
+      "Backend отправляет аудио в STT provider",
+      "Backend получает partial/final transcript",
+      "Assistant core принимает решение о tool usage и формирует ответ",
+      "Backend запускает потоковую генерацию текста ответа",
+      "Backend запускает TTS для голосового ответа",
+      "Backend возвращает текстовые события и аудио чанки обратно",
+      "Клиент воспроизводит ответ человеческим голосом",
+      "Если пользователь начинает говорить во время ответа, текущая озвучка и генерация прерываются",
+      "История сохраняет и пользовательский запрос, и финальный текст ассистента"
+    ],
+    "internet_search_flow": [
+      "Пользователь задает вопрос, требующий актуальных данных",
+      "Assistant core решает использовать search tool",
+      "Search service выполняет поиск и при необходимости извлекает текст страниц",
+      "LLM формирует ответ на основе найденного контента",
+      "UI получает структурированный ответ и список источников",
+      "Если включен голос, ответ также озвучивается"
+    ],
+    "voice_only_feeling_flow": [
+      "Пользователь нажимает кнопку голосового взаимодействия",
+      "Ассистент слушает речь пользователя",
+      "Ассистент отвечает человеческим голосом без необходимости читать весь текст",
+      "На экране при этом отображается синхронный текст ответа",
+      "Пользователь может перебить, уточнить или продолжить диалог"
+    ]
+  },
+  "mvp_definition": {
+    "deployment_mode": "docker_compose_on_single_host",
+    "platforms": [
+      "web"
+    ],
+    "interaction_modes": [
+      "text",
+      "voice"
+    ],
+    "mandatory_features": [
+      "Login/password для одного или нескольких локальных пользователей",
+      "Текстовый чат",
+      "История диалогов",
+      "Настройки пользователя",
+      "Локальная LLM через провайдерный интерфейс",
+      "Search tool для интернет-запросов",
+      "WebSocket realtime gateway",
+      "Partial transcript events",
+      "TTS/STT интерфейсы и возможность локального запуска",
+      "Голосовой ответ ассистента через TTS",
+      "Потоковая озвучка ответа ассистента",
+      "Interrupt/barge-in для прерывания ответа",
+      "OpenAPI contract-first pipeline",
+      "gRPC contracts для внутренних вызовов",
+      "Docker Compose запуск одной командой",
+      "Healthcheck endpoints",
+      "Reverse proxy with HTTPS"
+    ],
+    "optional_for_first_commit_but_required_in_architecture": [
+      "Desktop support readiness",
+      "Mobile support readiness",
+      "Event bus future extension",
+      "Memory module stubs",
+      "Multiple voice profiles",
+      "Cloud TTS/LLM providers"
+    ]
+  },
+  "recommended_runtime_topology": {
+    "mvp_runtime": [
+      {
+        "name": "caddy",
+        "type": "container",
+        "required": true,
+        "responsibility": "TLS termination, reverse proxy, static routing"
+      },
+      {
+        "name": "web",
+        "type": "container",
+        "required": true,
+        "responsibility": "React web application"
+      },
+      {
+        "name": "backend",
+        "type": "container",
+        "required": true,
+        "responsibility": "HTTP API, WebSocket realtime gateway, assistant orchestration, auth, settings, history, voice orchestration"
+      },
+      {
+        "name": "postgres",
+        "type": "container",
+        "required": true,
+        "responsibility": "Persistent relational storage"
+      },
+      {
+        "name": "redis",
+        "type": "container",
+        "required": true,
+        "responsibility": "Ephemeral state, rate limiting, session cache, pub/sub if needed"
+      },
+      {
+        "name": "local_llm",
+        "type": "container",
+        "required": true,
+        "responsibility": "Local LLM runtime",
+        "notes": "Default free mode"
+      },
+      {
+        "name": "stt",
+        "type": "container",
+        "required": false,
+        "responsibility": "Speech-to-text local runtime"
+      },
+      {
+        "name": "tts",
+        "type": "container",
+        "required": false,
+        "responsibility": "Text-to-speech local runtime with human-like voice generation"
+      },
+      {
+        "name": "search_meta",
+        "type": "container",
+        "required": false,
+        "responsibility": "Optional self-hosted meta-search layer"
+      }
+    ],
+    "future_runtime_split": [
+      "api_gateway",
+      "realtime_gateway",
+      "assistant_core",
+      "llm_gateway",
+      "search_service",
+      "memory_service",
+      "tool_runner",
+      "voice_orchestrator",
+      "tts_service",
+      "stt_service"
+    ]
+  },
+  "backend_architecture": {
+    "shape": "modular_monolith_with_clear_boundaries",
+    "required_modules": [
+      {
+        "name": "auth",
+        "responsibilities": [
+          "login",
+          "refresh token",
+          "user session validation",
+          "password hashing",
+          "JWT issuing"
+        ]
+      },
+      {
+        "name": "users",
+        "responsibilities": [
+          "user profile",
+          "settings retrieval and update"
+        ]
+      },
+      {
+        "name": "conversations",
+        "responsibilities": [
+          "create conversation",
+          "list conversation",
+          "message history",
+          "message persistence"
+        ]
+      },
+      {
+        "name": "assistant_core",
+        "responsibilities": [
+          "chat orchestration",
+          "routing between LLM and tools",
+          "prompt building",
+          "conversation state",
+          "response normalization"
+        ]
+      },
+      {
+        "name": "llm_gateway",
+        "responsibilities": [
+          "provider abstraction",
+          "model routing",
+          "request normalization",
+          "streaming support"
+        ]
+      },
+      {
+        "name": "search",
+        "responsibilities": [
+          "web search",
+          "page fetch",
+          "source extraction",
+          "timeout and safe failure"
+        ]
+      },
+      {
+        "name": "voice",
+        "responsibilities": [
+          "realtime session state",
+          "stt integration",
+          "tts integration",
+          "interrupt handling",
+          "audio event protocol",
+          "text and audio synchronization"
+        ]
+      },
+      {
+        "name": "voice_orchestrator",
+        "responsibilities": [
+          "segment assistant text for TTS",
+          "start streaming TTS as soon as enough text is available",
+          "coordinate assistant text deltas and audio chunks",
+          "stop TTS and generation on interrupt",
+          "select voice profile based on user settings"
+        ]
+      },
+      {
+        "name": "tools",
+        "responsibilities": [
+          "tool registry",
+          "tool execution policies",
+          "tool input validation",
+          "tool result normalization"
+        ]
+      },
+      {
+        "name": "memory",
+        "responsibilities": [
+          "store extracted facts",
+          "retrieve relevant memory",
+          "be optional in MVP if only stubbed"
+        ]
+      },
+      {
+        "name": "health",
+        "responsibilities": [
+          "liveness",
+          "readiness",
+          "dependency checks"
+        ]
+      }
+    ],
+    "required_packages_pattern": [
+      "internal/app",
+      "internal/domain",
+      "internal/service",
+      "internal/repository",
+      "internal/transport/http",
+      "internal/transport/ws",
+      "internal/transport/grpc",
+      "internal/config",
+      "internal/observability"
+    ]
+  },
+  "frontend_architecture": {
+    "framework": "react_typescript",
+    "required_properties": [
+      "web-first",
+      "component-based UI",
+      "generated API client from OpenAPI",
+      "single shared client SDK ready for future desktop/mobile reuse",
+      "voice transport abstraction",
+      "state management suitable for chat sessions"
+    ],
+    "required_modules": [
+      "auth",
+      "chat",
+      "conversation_history",
+      "settings",
+      "voice_session",
+      "api_client",
+      "realtime_client",
+      "audio_playback_manager"
+    ],
+    "future_portability_rules": [
+      "Не использовать браузерно-специфичные API напрямую в бизнес-логике UI",
+      "Вынести доступ к микрофону в adapter layer",
+      "Вынести воспроизведение аудио в adapter layer",
+      "Вынести realtime transport в adapter layer",
+      "Подготовить shared UI/domain слой для desktop/mobile"
+    ]
+  },
+  "desktop_mobile_readiness": {
+    "requirement": "Архитектура должна поддерживать desktop и mobile без смены backend API",
+    "rules": [
+      "Public HTTP API и realtime protocol должны быть общими для всех клиентов",
+      "Клиентские различия должны находиться только в platform adapters",
+      "Shared client SDK обязателен",
+      "Не допускать backend ветвления по типу клиента, кроме незначительных capability flags",
+      "Голосовой ответ должен поддерживаться на всех будущих клиентах через единый voice protocol"
+    ],
+    "future_targets": {
+      "desktop": "tauri",
+      "mobile": "capacitor_or_tauri_mobile"
+    }
+  },
+  "api_contracts": {
+    "public_http_api": {
+      "style": "REST JSON",
+      "source_of_truth": "openapi/openapi.yaml",
+      "versioning": "v1 in URL path",
+      "must_expose_openapi": true,
+      "openapi_endpoint": "/api/openapi.json",
+      "generation_rules": {
+        "backend": "generate Go models and server interfaces from OpenAPI",
+        "frontend": "generate TypeScript client and types from OpenAPI",
+        "manual_type_duplication_forbidden": true
+      },
+      "required_paths": [
+        {
+          "path": "/api/v1/health/live",
+          "method": "GET",
+          "purpose": "liveness"
+        },
+        {
+          "path": "/api/v1/health/ready",
+          "method": "GET",
+          "purpose": "readiness"
+        },
+        {
+          "path": "/api/v1/auth/login",
+          "method": "POST",
+          "purpose": "login by email_or_username and password"
+        },
+        {
+          "path": "/api/v1/auth/refresh",
+          "method": "POST",
+          "purpose": "refresh access token"
+        },
+        {
+          "path": "/api/v1/me",
+          "method": "GET",
+          "purpose": "current user profile"
+        },
+        {
+          "path": "/api/v1/settings",
+          "method": "GET",
+          "purpose": "read user settings"
+        },
+        {
+          "path": "/api/v1/settings",
+          "method": "PATCH",
+          "purpose": "update user settings"
+        },
+        {
+          "path": "/api/v1/conversations",
+          "method": "GET",
+          "purpose": "list conversations"
+        },
+        {
+          "path": "/api/v1/conversations",
+          "method": "POST",
+          "purpose": "create conversation"
+        },
+        {
+          "path": "/api/v1/conversations/{conversationId}",
+          "method": "GET",
+          "purpose": "conversation metadata"
+        },
+        {
+          "path": "/api/v1/conversations/{conversationId}/messages",
+          "method": "GET",
+          "purpose": "conversation messages"
+        },
+        {
+          "path": "/api/v1/chat/messages",
+          "method": "POST",
+          "purpose": "text chat request-response or server-stream option if supported"
+        },
+        {
+          "path": "/api/v1/tools",
+          "method": "GET",
+          "purpose": "list available tools and capabilities"
+        },
+        {
+          "path": "/api/v1/voices",
+          "method": "GET",
+          "purpose": "list available TTS voice profiles"
+        }
+      ]
+    },
+    "realtime_api": {
+      "transport": "websocket",
+      "endpoint": "/ws/v1/realtime",
+      "authentication": "bearer_token_query_or_header_during_upgrade",
+      "message_format": "json envelopes for control/text + binary or base64 frames for audio, choose one implementation and keep protocol versioned",
+      "required_client_events": [
+        "session.start",
+        "session.stop",
+        "text.message",
+        "audio.chunk",
+        "audio.commit",
+        "interrupt",
+        "tts.stop",
+        "ping"
+      ],
+      "required_server_events": [
+        "session.started",
+        "session.stopped",
+        "stt.partial",
+        "stt.final",
+        "assistant.delta",
+        "assistant.message",
+        "tts.started",
+        "tts.chunk",
+        "tts.finished",
+        "tool.started",
+        "tool.finished",
+        "error",
+        "pong"
+      ],
+      "protocol_rules": [
+        "Все события должны содержать type, requestId, sessionId, timestamp",
+        "Должна быть version field на уровне envelope",
+        "Ошибки должны иметь machine-readable code и human-readable message",
+        "Interrupt должен прерывать текущую генерацию и TTS playback",
+        "TTS audio chunks должны приходить в порядке воспроизведения",
+        "Клиент должен иметь возможность остановить только озвучку без уничтожения всей сессии"
+      ]
+    },
+    "internal_grpc_api": {
+      "source_of_truth": "proto/*.proto",
+      "services_required": [
+        {
+          "name": "LLMGatewayService",
+          "methods": [
+            "Generate",
+            "StreamGenerate"
+          ]
+        },
+        {
+          "name": "SearchService",
+          "methods": [
+            "Search",
+            "FetchPage"
+          ]
+        },
+        {
+          "name": "STTService",
+          "methods": [
+            "StreamRecognize"
+          ]
+        },
+        {
+          "name": "TTSService",
+          "methods": [
+            "Synthesize",
+            "StreamSynthesize",
+            "ListVoices"
+          ]
+        },
+        {
+          "name": "MemoryService",
+          "methods": [
+            "StoreMemory",
+            "SearchMemory"
+          ]
+        }
+      ],
+      "rules": [
+        "gRPC обязателен для внутренних синхронных вызовов между выделенными сервисами",
+        "В MVP допустима in-process реализация с сохранением proto contracts для будущего выделения",
+        "Streaming обязателен для STT и желателен для LLM/TTS",
+        "TTS service должен поддерживать по крайней мере один метод потоковой синтезации"
+      ]
+    }
+  },
+  "interservice_communication_strategy": {
+    "mvp": {
+      "primary": "in_process_interfaces_and_optional_grpc_sidecars",
+      "justification": [
+        "Снижает сложность старта",
+        "Ускоряет разработку pet project",
+        "Позволяет сохранить модульные границы"
+      ]
+    },
+    "target": {
+      "sync_calls": "grpc",
+      "async_events": "kafka_optional_later",
+      "kafka_not_required_for_mvp": true
+    },
+    "future_domain_events": [
+      "conversation.created",
+      "message.created",
+      "assistant.response.completed",
+      "assistant.speech.started",
+      "assistant.speech.finished",
+      "tool.started",
+      "tool.completed",
+      "tool.failed",
+      "memory.updated",
+      "search.performed"
+    ]
+  },
+  "llm_strategy": {
+    "default_mode": "local_free",
+    "provider_pattern": true,
+    "required_providers": [
+      {
+        "name": "local",
+        "required": true,
+        "purpose": "default free runtime"
+      },
+      {
+        "name": "cloud_optional",
+        "required": false,
+        "purpose": "future optional cloud model provider"
+      }
+    ],
+    "behavior_rules": [
+      "Ассистент должен работать без облачных API ключей в базовой конфигурации",
+      "Локальная LLM является основной конфигурацией по умолчанию",
+      "Cloud provider может быть добавлен через env/config без изменения бизнес-логики",
+      "LLM provider должен поддерживать tool calling abstraction на уровне backend"
+    ],
+    "local_model_requirements": [
+      "instruct model",
+      "small_or_medium_size_for_home_hardware",
+      "chat completion capable",
+      "streaming preferred"
+    ],
+    "config_fields": [
+      "LLM_PROVIDER",
+      "LLM_BASE_URL",
+      "LLM_MODEL",
+      "LLM_API_KEY_OPTIONAL",
+      "LLM_TIMEOUT_SECONDS"
+    ]
+  },
+  "search_strategy": {
+    "goal": "Получение актуальных интернет-данных без обязательных платных API",
+    "approach": "search_as_tool",
+    "implementation_options": [
+      "self_hosted_meta_search_optional",
+      "simple_search_adapter_with_page_fetch",
+      "future_external_providers_optional"
+    ],
+    "required_capabilities": [
+      "web query execution",
+      "return title/url/snippet",
+      "page fetch and cleanup",
+      "timeouts",
+      "source limits",
+      "safe error handling"
+    ],
+    "rules": [
+      "Ответы с актуальными онлайн-данными должны маркироваться источниками",
+      "Если search недоступен, ассистент должен честно сообщать об этом",
+      "Tool execution должен быть виден на UI как статус"
+    ]
+  },
+  "voice_strategy": {
+    "modes": [
+      "text_only",
+      "text_plus_voice",
+      "voice_first"
+    ],
+    "mvp_requirement": "full_voice_output_required",
+    "audio_transport": "websocket_first",
+    "future_transport": "webrtc_optional",
+    "stt": {
+      "default": "local",
+      "provider_pattern": true,
+      "requirements": [
+        "streaming recognition preferred",
+        "partial and final transcript support",
+        "language configuration",
+        "safe fallback when unavailable"
+      ]
+    },
+    "tts": {
+      "default": "local",
+      "provider_pattern": true,
+      "requirements": [
+        "human-like voice output",
+        "streaming audio chunks preferred",
+        "voice profile selection",
+        "language selection",
+        "speech rate support",
+        "stop playback on interrupt"
+      ]
+    },
+    "voice_output_quality_targets": [
+      "Голос должен быть разборчивым и естественным",
+      "Ассистент не должен ждать полного ответа целиком, если возможно раннее начало озвучки",
+      "Озвучка должна быть сегментирована на естественные фразы",
+      "Текст не должен читаться монотонно одним большим куском"
+    ],
+    "client_requirements": [
+      "microphone permission flow",
+      "device selection if possible",
+      "start/stop recording control",
+      "interrupt assistant response",
+      "audio playback queue",
+      "autoplay assistant voice if enabled",
+      "manual replay assistant voice"
+    ],
+    "server_requirements": [
+      "partial transcript events",
+      "final transcript events",
+      "assistant text delta events",
+      "tts started/chunk/finished events",
+      "session cleanup",
+      "interrupt and cancel propagation",
+      "voice profile resolution by user settings"
+    ],
+    "settings_required": [
+      "voice_enabled",
+      "auto_play_voice",
+      "voice_name",
+      "voice_language",
+      "speech_rate",
+      "speech_volume"
+    ],
+    "barge_in_rules": [
+      "Если пользователь нажимает interrupt, текущая озвучка останавливается немедленно",
+      "Если в активной голосовой сессии начинается новая пользовательская речь, сервер должен иметь возможность отменить текущий TTS/LLM pipeline",
+      "UI должен ясно отображать состояние listening/speaking/interrupted"
+    ]
+  },
+  "memory_strategy": {
+    "mvp_mode": "minimal_history_only",
+    "future_mode": "user_memory_and_rag",
+    "rules": [
+      "История диалогов обязательна в MVP",
+      "Long-term memory может быть stubbed в MVP",
+      "Память должна быть отдельным модулем даже если пока реализована минимально"
+    ]
+  },
+  "security_requirements": {
+    "baseline": [
+      "HTTPS обязателен для web deployment",
+      "JWT access token + refresh token",
+      "Password hashing using strong algorithm",
+      "CORS настроить только под локальные домены/hosts проекта",
+      "Secrets только через env files or docker secrets later",
+      "Никаких hardcoded credentials"
+    ],
+    "authorization": [
+      "Все conversation endpoints требуют аутентификации",
+      "Realtime session требует валидный токен",
+      "Tool execution подчиняется policy checks"
+    ],
+    "privacy": [
+      "Локальная конфигурация должна работать без отправки пользовательских данных в облако",
+      "Cloud providers disabled by default",
+      "Логи не должны содержать пароли и секреты",
+      "Голосовые аудио-чанки не должны бессрочно храниться по умолчанию"
+    ]
+  },
+  "data_storage": {
+    "primary_db": "postgres",
+    "cache": "redis",
+    "object_storage": "optional_later",
+    "required_entities": [
+      {
+        "name": "users",
+        "fields": [
+          "id",
+          "email_or_username",
+          "password_hash",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      {
+        "name": "refresh_tokens",
+        "fields": [
+          "id",
+          "user_id",
+          "token_hash",
+          "expires_at",
+          "created_at"
+        ]
+      },
+      {
+        "name": "user_settings",
+        "fields": [
+          "id",
+          "user_id",
+          "language",
+          "theme",
+          "voice_enabled",
+          "auto_play_voice",
+          "voice_name",
+          "voice_language",
+          "speech_rate",
+          "speech_volume",
+          "default_model",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      {
+        "name": "conversations",
+        "fields": [
+          "id",
+          "user_id",
+          "title",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      {
+        "name": "messages",
+        "fields": [
+          "id",
+          "conversation_id",
+          "role",
+          "content",
+          "sources_json_optional",
+          "has_tts_audio_optional",
+          "created_at"
+        ]
+      },
+      {
+        "name": "tool_executions",
+        "fields": [
+          "id",
+          "conversation_id",
+          "tool_name",
+          "status",
+          "input_json",
+          "output_json",
+          "error_message_optional",
+          "created_at"
+        ]
+      },
+      {
+        "name": "memory_items",
+        "fields": [
+          "id",
+          "user_id",
+          "kind",
+          "content",
+          "metadata_json",
+          "created_at"
+        ]
+      },
+      {
+        "name": "voice_profiles_cache_optional",
+        "fields": [
+          "id",
+          "provider",
+          "voice_name",
+          "language",
+          "metadata_json",
+          "updated_at"
+        ]
+      }
+    ],
+    "migration_policy": [
+      "Use migrations directory",
+      "Migrations run automatically on startup or via dedicated migrate command",
+      "No schema drift by manual DB edits"
+    ]
+  },
+  "observability": {
+    "logging": {
+      "format": "structured_json",
+      "requirements": [
+        "request_id",
+        "user_id_optional",
+        "conversation_id_optional",
+        "module",
+        "level",
+        "message",
+        "timestamp"
+      ]
+    },
+    "metrics": {
+      "required": [
+        "http_requests_total",
+        "http_request_duration",
+        "ws_active_sessions",
+        "llm_requests_total",
+        "llm_request_duration",
+        "tool_calls_total",
+        "search_requests_total",
+        "tts_requests_total",
+        "tts_stream_duration",
+        "stt_requests_total",
+        "voice_interrupts_total"
+      ]
+    },
+    "health_checks": [
+      "live",
+      "ready",
+      "db connectivity",
+      "redis connectivity",
+      "llm provider basic availability",
+      "tts provider basic availability optional",
+      "stt provider basic availability optional"
+    ]
+  },
+  "devops_requirements": {
+    "docker": {
+      "compose_required": true,
+      "single_command_up": true,
+      "profiles": [
+        "default",
+        "voice",
+        "cloud_optional"
+      ]
+    },
+    "caddy": {
+      "required": true,
+      "responsibilities": [
+        "TLS termination",
+        "routing /api to backend",
+        "routing /ws to backend",
+        "routing / to web"
+      ]
+    },
+    "configuration": {
+      "env_files": [
+        ".env",
+        ".env.example"
+      ],
+      "must_document_all_envs": true
+    }
+  },
+  "docker_compose_spec": {
+    "required_services": [
+      "caddy",
+      "web",
+      "backend",
+      "postgres",
+      "redis",
+      "local_llm"
+    ],
+    "optional_services": [
+      "stt",
+      "tts",
+      "search_meta"
+    ],
+    "requirements": [
+      "named volumes for persistent data",
+      "healthchecks for critical containers",
+      "depends_on with healthy conditions where possible",
+      "internal docker network",
+      "clear exposed ports only for caddy and optionally db in dev mode"
+    ]
+  },
+  "repository_structure": {
+    "type": "monorepo",
+    "tree": [
+      "apps/web",
+      "apps/desktop_placeholder",
+      "apps/mobile_placeholder",
+      "services/backend",
+      "services/stt_optional",
+      "services/tts_optional",
+      "services/local_llm_optional_config",
+      "openapi/openapi.yaml",
+      "proto/llm.proto",
+      "proto/search.proto",
+      "proto/stt.proto",
+      "proto/tts.proto",
+      "proto/memory.proto",
+      "packages/ts-client-generated",
+      "deploy/compose/docker-compose.yml",
+      "deploy/caddy/Caddyfile",
+      "scripts",
+      "docs"
+    ],
+    "rules": [
+      "OpenAPI and proto contracts live in repo root-level dedicated folders",
+      "Generated code must go to predictable directories",
+      "Generated artifacts can be committed if it simplifies onboarding, but generation commands must be reproducible",
+      "Frontend must consume generated client, not handcrafted duplicate types"
+    ]
+  },
+  "coding_standards": {
+    "backend": [
+      "Go modules",
+      "Context propagation required",
+      "No business logic in transport layer",
+      "Errors wrapped with context",
+      "Unit-test service layer",
+      "Repository interfaces for persistence",
+      "Configuration through structured config package"
+    ],
+    "frontend": [
+      "Strict TypeScript",
+      "No any unless absolutely unavoidable",
+      "Use generated API client",
+      "Separate UI components from transport logic",
+      "Reusable hooks for auth, chat, realtime, settings, playback"
+    ],
+    "general": [
+      "No hardcoded secrets",
+      "No duplicate DTO definitions if generated versions exist",
+      "Keep README and .env.example up to date",
+      "Document all make/scripts commands"
+    ]
+  },
+  "openapi_policy": {
+    "source_of_truth": "openapi/openapi.yaml",
+    "required_schemas": [
+      "ErrorResponse",
+      "LoginRequest",
+      "LoginResponse",
+      "RefreshRequest",
+      "TokenPair",
+      "UserProfile",
+      "UserSettings",
+      "UpdateUserSettingsRequest",
+      "Conversation",
+      "ConversationListResponse",
+      "CreateConversationRequest",
+      "Message",
+      "MessageListResponse",
+      "ChatMessageRequest",
+      "ChatMessageResponse",
+      "ToolDescriptor",
+      "VoiceProfile",
+      "VoiceProfileListResponse",
+      "HealthResponse"
+    ],
+    "rules": [
+      "Все public HTTP request/response DTO должны быть описаны в OpenAPI",
+      "Backend серверные типы генерируются из OpenAPI",
+      "Frontend типы и клиент генерируются из OpenAPI",
+      "Не держать ручные копии одинаковых схем в коде"
+    ]
+  },
+  "grpc_policy": {
+    "proto_source_of_truth": "proto/*.proto",
+    "rules": [
+      "Каждый выделяемый внутренний сервис должен иметь proto contract",
+      "Proto сообщения должны быть стабильны и versionable",
+      "Для потоковых сценариев использовать streaming RPC",
+      "Даже если реализация пока in-process, контракты должны быть подготовлены"
+    ]
+  },
+  "realtime_protocol_reference": {
+    "envelope_schema": {
+      "required_fields": [
+        "version",
+        "type",
+        "requestId",
+        "sessionId",
+        "timestamp"
+      ]
+    },
+    "client_event_examples": [
+      {
+        "type": "session.start",
+        "payload_fields": [
+          "conversationId_optional",
+          "mode",
+          "audioConfig_optional"
+        ]
+      },
+      {
+        "type": "text.message",
+        "payload_fields": [
+          "conversationId",
+          "content"
+        ]
+      },
+      {
+        "type": "audio.chunk",
+        "payload_fields": [
+          "sequence",
+          "audioEncoding",
+          "data"
+        ]
+      },
+      {
+        "type": "interrupt",
+        "payload_fields": []
+      },
+      {
+        "type": "tts.stop",
+        "payload_fields": []
+      }
+    ],
+    "server_event_examples": [
+      {
+        "type": "stt.partial",
+        "payload_fields": [
+          "text"
+        ]
+      },
+      {
+        "type": "stt.final",
+        "payload_fields": [
+          "text"
+        ]
+      },
+      {
+        "type": "assistant.delta",
+        "payload_fields": [
+          "text"
+        ]
+      },
+      {
+        "type": "assistant.message",
+        "payload_fields": [
+          "conversationId",
+          "message"
+        ]
+      },
+      {
+        "type": "tts.started",
+        "payload_fields": [
+          "voiceName"
+        ]
+      },
+      {
+        "type": "tts.chunk",
+        "payload_fields": [
+          "sequence",
+          "audioEncoding",
+          "data"
+        ]
+      },
+      {
+        "type": "tts.finished",
+        "payload_fields": []
+      },
+      {
+        "type": "tool.started",
+        "payload_fields": [
+          "toolName"
+        ]
+      },
+      {
+        "type": "tool.finished",
+        "payload_fields": [
+          "toolName",
+          "status"
+        ]
+      }
+    ]
+  },
+  "ui_requirements": {
+    "web_pages": [
+      "login",
+      "chat",
+      "settings"
+    ],
+    "chat_page_requirements": [
+      "conversation sidebar",
+      "message list",
+      "message composer",
+      "send button",
+      "new conversation action",
+      "voice start/stop controls",
+      "assistant speaking indicator",
+      "play/stop assistant voice controls",
+      "status line for tool usage and connection state"
+    ],
+    "settings_page_requirements": [
+      "theme",
+      "language",
+      "voice_enabled",
+      "auto_play_voice",
+      "selected_model",
+      "selected_voice_profile",
+      "speech_rate",
+      "speech_volume",
+      "selected_stt_provider_if_available",
+      "selected_tts_provider_if_available"
+    ],
+    "ux_rules": [
+      "UI must show loading and streaming states clearly",
+      "UI must show when internet search is being used",
+      "Voice controls must fail gracefully if microphone permission denied",
+      "UI must show whether assistant is listening, thinking or speaking",
+      "User must be able to stop assistant speech without refreshing the page"
+    ]
+  },
+  "testing_strategy": {
+    "backend_tests": [
+      "unit tests for assistant orchestration",
+      "unit tests for auth service",
+      "unit tests for tool router",
+      "unit tests for voice orchestrator",
+      "repository tests",
+      "HTTP handler tests",
+      "WebSocket protocol tests where practical"
+    ],
+    "frontend_tests": [
+      "component tests for chat UI",
+      "component tests for playback controls",
+      "basic integration tests for auth and chat flows"
+    ],
+    "end_to_end": [
+      "login flow",
+      "create conversation",
+      "send text message",
+      "receive assistant answer",
+      "internet search tool path",
+      "voice session basic connect/disconnect",
+      "assistant voice playback flow",
+      "interrupt assistant speech flow"
+    ]
+  },
+  "acceptance_criteria": {
+    "mvp_done_when": [
+      "Проект поднимается через Docker Compose без ручной сборки по шагам",
+      "Web-приложение доступно через Caddy",
+      "Пользователь может залогиниться",
+      "Пользователь может создать диалог и получить текстовый ответ от локальной LLM",
+      "Ассистент умеет использовать search tool для интернет-запросов",
+      "История диалога сохраняется в Postgres",
+      "OpenAPI доступен как endpoint и используется для генерации типов",
+      "Есть proto contracts для внутренних сервисов",
+      "Есть WebSocket realtime endpoint и минимальный voice/session flow",
+      "Ассистент может озвучивать ответ человеческим голосом через TTS",
+      "Пользователь может остановить или перебить текущую озвучку",
+      "Есть health/readiness endpoints",
+      "Есть README с инструкцией запуска"
+    ]
+  },
+  "implementation_plan": [
+    {
+      "phase": 1,
+      "name": "bootstrap_monorepo",
+      "deliverables": [
+        "Monorepo structure",
+        "Go backend skeleton",
+        "React web skeleton",
+        "Docker Compose base",
+        "Caddy config",
+        ".env.example",
+        "README skeleton"
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "contract_first_setup",
+      "deliverables": [
+        "Initial OpenAPI spec",
+        "Generated Go HTTP models/interfaces",
+        "Generated TS client/types",
+        "Initial proto files for internal services",
+        "Code generation scripts"
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "auth_and_settings",
+      "deliverables": [
+        "Login API",
+        "JWT auth",
+        "Refresh token flow",
+        "User settings API and UI",
+        "Voice settings API and UI"
+      ]
+    },
+    {
+      "phase": 4,
+      "name": "conversations_and_text_chat",
+      "deliverables": [
+        "Conversation persistence",
+        "Message persistence",
+        "Assistant core for text chat",
+        "Local LLM provider adapter",
+        "Chat UI"
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "search_tooling",
+      "deliverables": [
+        "Search service abstraction",
+        "Internet search tool",
+        "Source-aware responses",
+        "Tool status UI"
+      ]
+    },
+    {
+      "phase": 6,
+      "name": "realtime_voice_foundation",
+      "deliverables": [
+        "WebSocket realtime endpoint",
+        "Session lifecycle",
+        "Client voice adapter",
+        "STT/TTS provider interfaces",
+        "Basic interrupt flow",
+        "Playback manager"
+      ]
+    },
+    {
+      "phase": 7,
+      "name": "human_voice_output",
+      "deliverables": [
+        "Voice orchestrator",
+        "Streaming TTS pipeline",
+        "Assistant speaking state",
+        "Voice profile selection",
+        "Stop/replay assistant voice UI"
+      ]
+    },
+    {
+      "phase": 8,
+      "name": "polish_and_observability",
+      "deliverables": [
+        "Structured logs",
+        "Health checks",
+        "Metrics basics",
+        "Error normalization",
+        "README completion"
+      ]
+    },
+    {
+      "phase": 9,
+      "name": "future_ready_cleanup",
+      "deliverables": [
+        "Desktop/mobile placeholders",
+        "Shared client SDK extraction",
+        "Documented service boundaries",
+        "Kafka future events documentation"
+      ]
+    }
+  ],
+  "initial_env_contract": {
+    "required": [
+      "APP_ENV",
+      "APP_HOST",
+      "APP_PORT",
+      "PUBLIC_BASE_URL",
+      "JWT_SECRET",
+      "POSTGRES_DSN",
+      "REDIS_ADDR",
+      "LLM_PROVIDER",
+      "LLM_BASE_URL",
+      "LLM_MODEL"
+    ],
+    "optional": [
+      "LLM_API_KEY",
+      "SEARCH_PROVIDER",
+      "SEARCH_BASE_URL",
+      "STT_PROVIDER",
+      "STT_BASE_URL",
+      "TTS_PROVIDER",
+      "TTS_BASE_URL",
+      "DEFAULT_VOICE_NAME",
+      "CORS_ALLOWED_ORIGINS",
+      "LOG_LEVEL"
+    ]
+  },
+  "non_functional_requirements": {
+    "performance_targets": [
+      "Text chat request should feel responsive on local network",
+      "Realtime session connect should complete quickly on local network",
+      "Search tool calls must have timeout and never hang indefinitely",
+      "Backend startup should fail fast if critical config missing",
+      "Voice response should begin as early as reasonably possible after answer generation starts"
+    ],
+    "maintainability": [
+      "Generated code isolated from handwritten business logic",
+      "Clear module boundaries",
+      "Documented scripts and commands",
+      "Minimal surprise local setup"
+    ],
+    "reliability": [
+      "Graceful handling of missing LLM or search backend",
+      "Health endpoints reflect dependency state",
+      "No silent failures in tool execution",
+      "Interrupt must clean up current TTS streaming state"
+    ]
+  },
+  "future_extensions": {
+    "phase_2_features": [
+      "RAG for local files",
+      "Wake word on desktop/mobile",
+      "Desktop shell",
+      "Mobile shell",
+      "Long-term memory",
+      "Tool permissions UI",
+      "Event bus",
+      "More natural voices",
+      "Emotion/style presets"
+    ],
+    "distributed_evolution_path": [
+      "Extract llm_gateway to separate gRPC service",
+      "Extract search_service to separate gRPC service",
+      "Extract voice gateway if needed",
+      "Extract tts_service and stt_service cleanly",
+      "Introduce Kafka for async domain events"
+    ]
+  },
+  "explicit_anti_requirements": [
+    "Do not build a tightly coupled backend only for web",
+    "Do not use Kafka in MVP unless absolutely necessary",
+    "Do not handwrite duplicate TS and Go DTOs when contracts are generated",
+    "Do not make cloud provider mandatory for core functionality",
+    "Do not skip HTTPS in the intended web deployment model",
+    "Do not mix transport concerns and business logic in one package",
+    "Do not treat voice output as a front-end only feature without backend support"
+  ],
+  "cursor_execution_instructions": [
+    "Use this JSON as the primary implementation blueprint",
+    "Prefer incremental delivery by phases in implementation_plan",
+    "Keep contracts first: define OpenAPI and proto before wiring handlers deeply",
+    "Start with modular monolith backend in Go, but preserve future service extraction boundaries",
+    "Implement local LLM provider as the default runtime path",
+    "Implement TTS as a first-class capability, not as an afterthought",
+    "Generate code instead of duplicating request/response types manually",
+    "Keep the project runnable after each phase",
+    "Document every generated command and startup step"
+  ]
+}

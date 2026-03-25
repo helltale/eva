@@ -1,0 +1,615 @@
+openapi: 3.0.3
+info:
+  title: EVA LAN Voice Assistant API
+  version: 1.0.0
+  description: Self-hosted assistant HTTP API (contract-first).
+
+servers:
+  - url: /
+
+tags:
+  - name: health
+  - name: auth
+  - name: users
+  - name: settings
+  - name: conversations
+  - name: chat
+  - name: tools
+  - name: voices
+
+paths:
+  /api/openapi.json:
+    get:
+      operationId: getOpenAPISpec
+      tags: [health]
+      summary: OpenAPI document (JSON)
+      responses:
+        "200":
+          description: OpenAPI specification
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/health/live:
+    get:
+      operationId: healthLive
+      tags: [health]
+      summary: Liveness probe
+      responses:
+        "200":
+          description: Alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/health/ready:
+    get:
+      operationId: healthReady
+      tags: [health]
+      summary: Readiness probe
+      responses:
+        "200":
+          description: Ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          description: Not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/auth/login:
+    post:
+      operationId: authLogin
+      tags: [auth]
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Tokens
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/auth/refresh:
+    post:
+      operationId: authRefresh
+      tags: [auth]
+      summary: Refresh access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: Tokens
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/me:
+    get:
+      operationId: getMe
+      tags: [users]
+      summary: Current user profile
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/settings:
+    get:
+      operationId: getSettings
+      tags: [settings]
+      summary: Read user settings
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserSettings"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: patchSettings
+      tags: [settings]
+      summary: Update user settings
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserSettingsRequest"
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserSettings"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/conversations:
+    get:
+      operationId: listConversations
+      tags: [conversations]
+      security:
+        - bearerAuth: []
+      summary: List conversations
+      responses:
+        "200":
+          description: List
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationListResponse"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createConversation
+      tags: [conversations]
+      security:
+        - bearerAuth: []
+      summary: Create conversation
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateConversationRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversation"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/conversations/{conversationId}:
+    get:
+      operationId: getConversation
+      tags: [conversations]
+      security:
+        - bearerAuth: []
+      summary: Get conversation
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Conversation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversation"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/conversations/{conversationId}/messages:
+    get:
+      operationId: listMessages
+      tags: [conversations]
+      security:
+        - bearerAuth: []
+      summary: List messages
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Messages
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageListResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/chat/messages:
+    post:
+      operationId: chatMessage
+      tags: [chat]
+      security:
+        - bearerAuth: []
+      summary: Send chat message (JSON or SSE stream)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatMessageRequest"
+      responses:
+        "200":
+          description: Assistant reply (non-streaming)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatMessageResponse"
+            text/event-stream:
+              schema:
+                type: string
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/tools:
+    get:
+      operationId: listTools
+      tags: [tools]
+      security:
+        - bearerAuth: []
+      summary: List tools
+      responses:
+        "200":
+          description: Tools
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tools]
+                properties:
+                  tools:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ToolDescriptor"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/voices:
+    get:
+      operationId: listVoices
+      tags: [voices]
+      security:
+        - bearerAuth: []
+      summary: List TTS voice profiles
+      responses:
+        "200":
+          description: Voices
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceProfileListResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [ok, fail]
+
+    LoginRequest:
+      type: object
+      required: [email_or_username, password]
+      properties:
+        email_or_username:
+          type: string
+        password:
+          type: string
+          format: password
+
+    TokenPair:
+      type: object
+      required: [accessToken, refreshToken, expiresIn]
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        expiresIn:
+          type: integer
+          description: Access token TTL seconds
+
+    LoginResponse:
+      type: object
+      required: [user, tokens]
+      properties:
+        user:
+          $ref: "#/components/schemas/UserProfile"
+        tokens:
+          $ref: "#/components/schemas/TokenPair"
+
+    RefreshRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+
+    UserProfile:
+      type: object
+      required: [id, emailOrUsername]
+      properties:
+        id:
+          type: string
+          format: uuid
+        emailOrUsername:
+          type: string
+
+    UserSettings:
+      type: object
+      required:
+        - language
+        - theme
+        - voiceEnabled
+        - autoPlayVoice
+        - voiceLanguage
+        - speechRate
+        - speechVolume
+      properties:
+        language:
+          type: string
+        theme:
+          type: string
+          enum: [light, dark, system]
+        voiceEnabled:
+          type: boolean
+        autoPlayVoice:
+          type: boolean
+        voiceName:
+          type: string
+        voiceLanguage:
+          type: string
+        speechRate:
+          type: number
+          format: float
+        speechVolume:
+          type: number
+          format: float
+        defaultModel:
+          type: string
+        sttProvider:
+          type: string
+        ttsProvider:
+          type: string
+
+    UpdateUserSettingsRequest:
+      type: object
+      properties:
+        language:
+          type: string
+        theme:
+          type: string
+          enum: [light, dark, system]
+        voiceEnabled:
+          type: boolean
+        autoPlayVoice:
+          type: boolean
+        voiceName:
+          type: string
+        voiceLanguage:
+          type: string
+        speechRate:
+          type: number
+          format: float
+        speechVolume:
+          type: number
+          format: float
+        defaultModel:
+          type: string
+        sttProvider:
+          type: string
+        ttsProvider:
+          type: string
+
+    Conversation:
+      type: object
+      required: [id, userId, title, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ConversationListResponse:
+      type: object
+      required: [conversations]
+      properties:
+        conversations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Conversation"
+
+    CreateConversationRequest:
+      type: object
+      properties:
+        title:
+          type: string
+
+    MessageSource:
+      type: object
+      required: [title, url]
+      properties:
+        title:
+          type: string
+        url:
+          type: string
+        snippet:
+          type: string
+
+    Message:
+      type: object
+      required: [id, conversationId, role, content, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        conversationId:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [user, assistant, system, tool]
+        content:
+          type: string
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessageSource"
+        hasTtsAudio:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    MessageListResponse:
+      type: object
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+
+    ChatMessageRequest:
+      type: object
+      required: [conversationId, content]
+      properties:
+        conversationId:
+          type: string
+          format: uuid
+        content:
+          type: string
+        stream:
+          type: boolean
+          default: false
+
+    ChatMessageResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          $ref: "#/components/schemas/Message"
+        toolExecutions:
+          type: array
+          items:
+            type: object
+            properties:
+              toolName:
+                type: string
+              status:
+                type: string
+
+    ToolDescriptor:
+      type: object
+      required: [name, description]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        parametersSchema:
+          type: object
+          additionalProperties: true
+
+    VoiceProfile:
+      type: object
+      required: [id, name, language]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        language:
+          type: string
+        provider:
+          type: string
+
+    VoiceProfileListResponse:
+      type: object
+      required: [voices]
+      properties:
+        voices:
+          type: array
+          items:
+            $ref: "#/components/schemas/VoiceProfile"

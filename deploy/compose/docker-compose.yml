@@ -1,0 +1,90 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ../caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - web
+      - backend
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:-localhost}
+
+  web:
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+    expose:
+      - "80"
+
+  backend:
+    build:
+      context: ../..
+      dockerfile: services/backend/Dockerfile
+    expose:
+      - "8080"
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      APP_HOST: 0.0.0.0
+      APP_PORT: "8080"
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://localhost}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      POSTGRES_DSN: postgres://${POSTGRES_USER:-eva}:${POSTGRES_PASSWORD:-eva}@postgres:5432/${POSTGRES_DB:-eva}?sslmode=disable
+      REDIS_ADDR: redis:6379
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai_compat}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://ollama:11434/v1}
+      LLM_MODEL: ${LLM_MODEL:-llama3.2}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-120}
+      SEARCH_PROVIDER: ${SEARCH_PROVIDER:-duckduckgo_html}
+      SEARCH_BASE_URL: ${SEARCH_BASE_URL:-}
+      STT_PROVIDER: ${STT_PROVIDER:-noop}
+      STT_BASE_URL: ${STT_BASE_URL:-}
+      TTS_PROVIDER: ${TTS_PROVIDER:-noop}
+      TTS_BASE_URL: ${TTS_BASE_URL:-}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://localhost}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-eva}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-eva}
+      POSTGRES_DB: ${POSTGRES_DB:-eva}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-eva} -d ${POSTGRES_DB:-eva}"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+    # ports: ["5432:5432"]  # uncomment for local dev
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    # deploy.resources not set for portability
+
+volumes:
+  pg_data:
+  ollama_data:
+  caddy_data:

@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package eva.memory.v1;
+
+option go_package = "eva/services/backend/internal/gen/memory/v1;memoryv1";
+
+service MemoryService {
+  rpc StoreMemory(StoreMemoryRequest) returns (StoreMemoryResponse);
+  rpc SearchMemory(SearchMemoryRequest) returns (SearchMemoryResponse);
+}
+
+message StoreMemoryRequest {
+  string user_id = 1;
+  string kind = 2;
+  string content = 3;
+  string metadata_json = 4;
+}
+
+message StoreMemoryResponse {
+  string id = 1;
+  string error = 2;
+}
+
+message SearchMemoryRequest {
+  string user_id = 1;
+  string query = 2;
+  int32 limit = 3;
+}
+
+message MemoryHit {
+  string id = 1;
+  string kind = 2;
+  string content = 3;
+  string metadata_json = 4;
+}
+
+message SearchMemoryResponse {
+  repeated MemoryHit hits = 1;
+}
