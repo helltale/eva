@@ -1,5 +1,7 @@
 import type { paths } from "../../../../packages/ts-client-generated/schema";
 
+import { getStoredRefreshToken, storeRefreshedTokens } from "../authBridge";
+
 export type TokenPair = {
   accessToken: string;
   refreshToken: string;
@@ -13,21 +15,45 @@ export function apiBase(): string {
   return "";
 }
 
-export async function apiFetch(
-  path: string,
-  init: RequestInit & { token?: string | null } = {}
-): Promise<Response> {
-  const { token, headers: h, ...rest } = init;
+type ApiFetchInit = RequestInit & { token?: string | null; skipAuthRetry?: boolean };
+
+export async function apiFetch(path: string, init: ApiFetchInit = {}): Promise<Response> {
+  const { token, skipAuthRetry, headers: h, ...rest } = init;
   const headers = new Headers(h);
   if (!headers.has("Content-Type") && rest.body && typeof rest.body === "string") {
     headers.set("Content-Type", "application/json");
   }
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  return origFetch(`${apiBase()}${path}`, { ...rest, headers });
+  const url = `${apiBase()}${path}`;
+  let res = await origFetch(url, { ...rest, headers });
+  if (res.status === 401 && token && !skipAuthRetry) {
+    const next = await refreshAccessToken();
+    if (next) {
+      const h2 = new Headers(headers);
+      h2.set("Authorization", `Bearer ${next}`);
+      res = await origFetch(url, { ...rest, headers: h2 });
+    }
+  }
+  return res;
 }
 
 export type LoginBody = paths["/api/v1/auth/login"]["post"]["requestBody"]["content"]["application/json"];
 export type LoginRes = paths["/api/v1/auth/login"]["post"]["responses"]["200"]["content"]["application/json"];
+
+async function refreshAccessToken(): Promise<string | null> {
+  const rt = getStoredRefreshToken();
+  if (!rt) return null;
+  const headers = new Headers({ "Content-Type": "application/json" });
+  const res = await origFetch(`${apiBase()}/api/v1/auth/refresh`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ refreshToken: rt }),
+  });
+  if (!res.ok) return null;
+  const j = (await res.json()) as LoginRes;
+  storeRefreshedTokens(j.tokens.accessToken, j.tokens.refreshToken);
+  return j.tokens.accessToken;
+}
 
 export async function login(body: LoginBody): Promise<LoginRes> {
   const r = await apiFetch("/api/v1/auth/login", { method: "POST", body: JSON.stringify(body) });

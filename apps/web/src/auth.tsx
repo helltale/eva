@@ -1,5 +1,6 @@
-import React, { createContext, useCallback, useContext, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import * as api from "./api/client";
+import { registerAuthBridge } from "./authBridge";
 
 type AuthState = {
   access: string | null;
@@ -31,6 +32,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const persist = useCallback((s: AuthState) => {
     setState(s);
     localStorage.setItem(storageKey, JSON.stringify(s));
+  }, []);
+
+  useEffect(() => {
+    registerAuthBridge(
+      () => {
+        try {
+          const raw = localStorage.getItem(storageKey);
+          if (!raw) return null;
+          const j = JSON.parse(raw) as AuthState;
+          return j.refresh;
+        } catch {
+          return null;
+        }
+      },
+      (t) => {
+        setState((prev) => {
+          const next = { ...prev, access: t.access, refresh: t.refresh };
+          localStorage.setItem(storageKey, JSON.stringify(next));
+          return next;
+        });
+      }
+    );
   }, []);
 
   const login = useCallback(
