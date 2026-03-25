@@ -45,6 +45,7 @@ services:
       STT_BASE_URL: ${STT_BASE_URL:-}
       TTS_PROVIDER: ${TTS_PROVIDER:-noop}
       TTS_BASE_URL: ${TTS_BASE_URL:-}
+      TTS_NOOP_BEEP: ${TTS_NOOP_BEEP:-true}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://localhost}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:

@@ -2,8 +2,12 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import * as api from "../api/client";
 import type { Message } from "../api/client";
+import { startMicStreaming } from "../audio/mic";
+import { PlaybackManager } from "../audio/playback";
 import { useAuth } from "../auth";
 import { connectRealtime, Realtime } from "../realtime/ws";
+
+type VoicePhase = "idle" | "listening" | "speaking" | "thinking";
 
 export function ChatPage() {
   const { state, logout } = useAuth();
@@ -15,7 +19,12 @@ export function ChatPage() {
   const [streaming, setStreaming] = useState("");
   const [status, setStatus] = useState("");
   const [toolStatus, setToolStatus] = useState("");
+  const [wsConnected, setWsConnected] = useState(false);
+  const [voicePhase, setVoicePhase] = useState<VoicePhase>("idle");
+  const [micOn, setMicOn] = useState(false);
   const rtRef = useRef<Realtime | null>(null);
+  const playbackRef = useRef(new PlaybackManager());
+  const stopMicRef = useRef<(() => void) | null>(null);
 
   const loadConvos = useCallback(async () => {
     const list = await api.listConversations(token);
@@ -36,6 +45,15 @@ export function ChatPage() {
       .catch(() => setStatus("messages error"))
       .finally(() => setStatus(""));
   }, [token, activeId]);
+
+  useEffect(() => {
+    const pb = playbackRef.current;
+    return () => {
+      stopMicRef.current?.();
+      pb.dispose();
+      rtRef.current?.close();
+    };
+  }, []);
 
   async function newChat() {
     const c = await api.createConversation(token, "New chat");
@@ -60,6 +78,7 @@ export function ChatPage() {
     };
     setMessages((m) => [...m, userMsg]);
     setStatus("thinking…");
+    setVoicePhase("thinking");
 
     try {
       let acc = "";
@@ -73,6 +92,7 @@ export function ChatPage() {
         async (final) => {
           setStreaming("");
           setStatus("");
+          setVoicePhase("idle");
           const msgs = await api.listMessages(token, activeId);
           setMessages(msgs);
           void final;
@@ -80,18 +100,35 @@ export function ChatPage() {
       );
     } catch {
       setStatus("chat error");
+      setVoicePhase("idle");
     }
   }
 
-  function startVoiceSession() {
+  function openRealtime() {
     if (!activeId || !token) return;
+    playbackRef.current.stop();
     rtRef.current?.close();
+    setVoicePhase("idle");
+    setStreaming("");
     const rt = connectRealtime(token, {
-      onDelta: (t) => setStreaming((x) => x + t),
+      onDelta: (t) => {
+        setVoicePhase("speaking");
+        setStreaming((x) => x + t);
+      },
       onStatus: (s) => setToolStatus(s),
       onDone: () => {
         setStreaming("");
-        api.listMessages(token, activeId).then(setMessages);
+        setVoicePhase("idle");
+        if (activeId) void api.listMessages(token, activeId).then(setMessages);
+      },
+      onTTSChunk: (_seq, _enc, b64) => {
+        setVoicePhase("speaking");
+        playbackRef.current.enqueueBase64(b64, _enc);
+      },
+      onConnection: (ok) => setWsConnected(ok),
+      onSpeakingIdle: () => {
+        setVoicePhase("idle");
+        playbackRef.current.stop();
       },
     });
     rtRef.current = rt;
@@ -107,6 +144,7 @@ export function ChatPage() {
 
   function sendVoiceText() {
     if (!input.trim() || !activeId) return;
+    setVoicePhase("thinking");
     rtRef.current?.send({
       version: "1",
       type: "text.message",
@@ -118,6 +156,58 @@ export function ChatPage() {
     setInput("");
   }
 
+  async function toggleMic() {
+    if (stopMicRef.current) {
+      stopMicRef.current();
+      stopMicRef.current = null;
+      setMicOn(false);
+      setVoicePhase("idle");
+      rtRef.current?.send({
+        version: "1",
+        type: "audio.commit",
+        requestId: crypto.randomUUID(),
+        sessionId: rtRef.current.sessionId || "",
+        timestamp: Date.now(),
+      });
+      return;
+    }
+    try {
+      setVoicePhase("listening");
+      setMicOn(true);
+      const stop = await startMicStreaming((chunk) => {
+        rtRef.current?.send({
+          version: "1",
+          type: "audio.chunk",
+          requestId: crypto.randomUUID(),
+          sessionId: rtRef.current?.sessionId || "",
+          timestamp: Date.now(),
+          payload: {
+            sequence: chunk.sequence,
+            audioEncoding: chunk.audioEncoding,
+            data: chunk.data,
+          },
+        });
+      });
+      stopMicRef.current = stop;
+    } catch {
+      setStatus("microphone permission denied or unavailable");
+      setVoicePhase("idle");
+      setMicOn(false);
+    }
+  }
+
+  function interrupt() {
+    playbackRef.current.stop();
+    setVoicePhase("idle");
+    rtRef.current?.send({
+      version: "1",
+      type: "interrupt",
+      requestId: crypto.randomUUID(),
+      sessionId: rtRef.current.sessionId || "",
+      timestamp: Date.now(),
+    });
+  }
+
   return (
     <div style={{ display: "flex", height: "100vh" }}>
       <aside style={{ width: 240, borderRight: "1px solid #e2e8f0", padding: 12 }}>
@@ -127,7 +217,7 @@ export function ChatPage() {
             Out
           </button>
         </div>
-        <button type="button" onClick={() => newChat()} style={{ width: "100%", marginTop: 8 }}>
+        <button type="button" onClick={() => void newChat()} style={{ width: "100%", marginTop: 8 }}>
           New chat
         </button>
         <ul style={{ listStyle: "none", padding: 0 }}>
@@ -173,37 +263,35 @@ export function ChatPage() {
           )}
         </div>
         <div style={{ borderTop: "1px solid #e2e8f0", padding: 8 }}>
-          <div style={{ fontSize: 12, color: "#64748b" }}>
-            {status} {toolStatus}
+          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>
+            WS: {wsConnected ? "connected" : "disconnected"} · Voice: {voicePhase}
+            {status ? ` · ${status}` : ""} {toolStatus}
           </div>
-          <form onSubmit={onSend} style={{ display: "flex", gap: 8 }}>
+          <form onSubmit={onSend} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Message…"
-              style={{ flex: 1, padding: 8 }}
+              style={{ flex: "1 1 200px", padding: 8, minWidth: 120 }}
             />
             <button type="submit" disabled={!activeId}>
               Send
             </button>
-            <button type="button" onClick={() => startVoiceSession()}>
-              WS session
+            <button type="button" title="Open WebSocket session" onClick={() => openRealtime()}>
+              Voice session
             </button>
-            <button type="button" onClick={() => sendVoiceText()}>
-              WS send
+            <button type="button" onClick={() => sendVoiceText()} disabled={!rtRef.current}>
+              Send via WS
             </button>
             <button
               type="button"
-              onClick={() => {
-                rtRef.current?.send({
-                  version: "1",
-                  type: "interrupt",
-                  requestId: crypto.randomUUID(),
-                  sessionId: rtRef.current.sessionId || "",
-                  timestamp: Date.now(),
-                });
-              }}
+              onClick={() => void toggleMic()}
+              style={{ background: micOn ? "#fecaca" : undefined }}
+              title="Stream microphone chunks (requires HTTPS)"
             >
+              {micOn ? "Stop mic" : "Mic"}
+            </button>
+            <button type="button" onClick={() => interrupt()}>
               Interrupt
             </button>
           </form>

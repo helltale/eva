@@ -59,6 +59,7 @@ Pet-project stack from `tz-eva.json`: **Go** modular monolith, **React** web cli
 ## Voice / search notes
 
 - **TTS/STT** default to `noop` providers; WebSocket protocol is implemented so you can plug in real services later.
+- With **`TTS_PROVIDER=noop`** and **`TTS_NOOP_BEEP=true`** (default), the server sends a short **WAV** `tts.chunk` after each WS reply so the web client can verify **Web Audio** playback end-to-end. Set `TTS_NOOP_BEEP=false` to disable the tone.
 - **Search** uses DuckDuckGo’s JSON API (no API key); failures are surfaced to the model and user honestly.
 
 ## Future

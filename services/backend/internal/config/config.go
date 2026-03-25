@@ -32,6 +32,8 @@ type Config struct {
 	TTSProvider      string
 	TTSBaseURL       string
 	DefaultVoiceName string
+	// TTSNoopBeep sends a short WAV over WS tts.chunk when TTS_PROVIDER=noop (verify playback pipeline).
+	TTSNoopBeep bool
 }
 
 func Load() (Config, error) {
@@ -58,6 +60,8 @@ func Load() (Config, error) {
 		TTSBaseURL:       os.Getenv("TTS_BASE_URL"),
 		DefaultVoiceName: getenv("DEFAULT_VOICE_NAME", "default"),
 	}
+	v := os.Getenv("TTS_NOOP_BEEP")
+	c.TTSNoopBeep = v == "" || strings.EqualFold(v, "true") || v == "1"
 	if raw := os.Getenv("CORS_ALLOWED_ORIGINS"); raw != "" {
 		for _, o := range strings.Split(raw, ",") {
 			o = strings.TrimSpace(o)
